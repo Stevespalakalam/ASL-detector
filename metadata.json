@@ -1,0 +1,8 @@
+{
+  "name": "ASL Translate",
+  "description": "A web app that uses Gemini for recognition and translation, with a built-in personal training library. Record and upload multiple takes of your own ASL signs, collect samples until recognition is highly confident, and then perform live camera translation to English with a high-confidence mode.",
+  "requestFramePermissions": [
+    "camera"
+  ],
+  "majorCapabilities": []
+}
