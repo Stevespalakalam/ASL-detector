@@ -61,6 +61,7 @@ canvas.hand-overlay {
   height: 100%;
   pointer-events: none;
   transform: scaleX(-1);
+  z-index: 30;
 }
 
 /* Input focus rings */
