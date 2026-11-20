@@ -386,7 +386,7 @@ const TranslatePage: React.FC = () => {
 
       <div className="flex flex-col lg:flex-row gap-6">
         {/* ── Camera Panel ── */}
-        <div className="lg:w-2/3">
+        <div className="lg:w-2/3 flex flex-col gap-3">
           <div className="relative aspect-video bg-black rounded-2xl overflow-hidden border border-white/8 shadow-2xl">
             {/* Mirrored video */}
             <video
@@ -431,47 +431,21 @@ const TranslatePage: React.FC = () => {
                     ? `● Tracking 21 points (${handsDetected} hand${handsDetected > 1 ? 's' : ''})`
                     : 'Show hand to camera'}
                 </div>
+
+                {/* Subtle top indicator during switch window */}
+                {cooldownSeconds > 0 && (
+                  <div className="glass px-3 py-1 rounded-full text-xs font-mono font-bold text-sky-300 border border-sky-400/30 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-sky-400 animate-ping" />
+                    Switch sign: {cooldownSeconds}s
+                  </div>
+                )}
+
                 <button
                   onClick={() => setIsCameraOn(false)}
                   className="glass px-3.5 py-1.5 rounded-full text-xs font-semibold text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-all"
                 >
                   Stop Camera
                 </button>
-              </div>
-            )}
-
-            {/* 5-Second Transition Time Breaker Floating HUD */}
-            {isCameraOn && cooldownSeconds > 0 && (
-              <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 w-11/12 max-w-sm pointer-events-auto">
-                <div className="glass px-4 py-3 rounded-2xl border border-sky-400/40 bg-sky-950/85 shadow-2xl backdrop-blur-xl flex flex-col gap-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-green-400 animate-ping" />
-                      <p className="text-sm font-bold text-white">
-                        Recorded <span className="text-sky-300 font-extrabold uppercase tracking-wide">"{lastCommittedSign}"</span>
-                      </p>
-                    </div>
-                    <span className="text-xs font-mono font-bold text-sky-200 bg-sky-500/30 px-2.5 py-0.5 rounded-lg border border-sky-400/30">
-                      Switch in {cooldownSeconds}s
-                    </span>
-                  </div>
-                  {/* Animated 5s countdown progress bar */}
-                  <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-sky-400 via-violet-400 to-green-400 transition-all duration-200 rounded-full"
-                      style={{ width: `${Math.min(100, Math.max(5, ((5 - cooldownSeconds + 0.2) / 5) * 100))}%` }}
-                    />
-                  </div>
-                  <div className="flex items-center justify-between text-[11px] text-gray-300">
-                    <span>Switch to your next sign comfortably</span>
-                    <button
-                      onClick={handleSkipCooldown}
-                      className="text-sky-400 hover:text-white font-semibold underline transition-colors"
-                    >
-                      Ready now ⚡
-                    </button>
-                  </div>
-                </div>
               </div>
             )}
 
@@ -527,6 +501,41 @@ const TranslatePage: React.FC = () => {
               </div>
             )}
           </div>
+
+          {/* Under-Camera Transition Breaker Bar (Zero Camera Obstruction) */}
+          {isCameraOn && cooldownSeconds > 0 && (
+            <div className="glass px-4 py-3 rounded-2xl border border-sky-400/30 bg-sky-950/40 backdrop-blur-md flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xl transition-all">
+              <div className="flex items-center gap-3">
+                <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+                <div>
+                  <p className="text-xs text-gray-400">
+                    Recorded <span className="text-sky-300 font-bold uppercase tracking-wide">"{lastCommittedSign}"</span>
+                  </p>
+                  <p className="text-xs text-gray-300 font-medium">
+                    Switch comfortably to your next sign
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 self-end sm:self-auto w-full sm:w-auto justify-between sm:justify-end">
+                <span className="text-xs font-mono font-bold text-sky-200 bg-sky-500/20 px-2.5 py-0.5 rounded-lg border border-sky-400/30">
+                  {cooldownSeconds}s
+                </span>
+                <div className="w-28 sm:w-36 bg-white/10 rounded-full h-1.5 overflow-hidden">
+                  <div
+                    className="h-full bg-gradient-to-r from-sky-400 via-indigo-400 to-emerald-400 transition-all duration-200 rounded-full"
+                    style={{ width: `${Math.min(100, Math.max(5, ((5 - cooldownSeconds + 0.2) / 5) * 100))}%` }}
+                  />
+                </div>
+                <button
+                  onClick={handleSkipCooldown}
+                  className="px-3 py-1 text-xs font-semibold rounded-lg bg-sky-500/20 hover:bg-sky-500/30 border border-sky-400/40 text-sky-300 hover:text-white transition-all whitespace-nowrap"
+                >
+                  Ready now ⚡
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Right Panel: Transcript & Settings ── */}
