@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { liveTranslate } from '../services/geminiService';
-import { getSettings, updateSettings } from '../services/dataService';
+import { getSigns, getSettings, updateSettings } from '../services/dataService';
 import Button from './Button';
 import CopyIcon from './icons/CopyIcon';
 import ClearIcon from './icons/ClearIcon';
@@ -25,6 +25,7 @@ const HAND_CONNECTIONS_MAP: [number, number][] = [
 
 const TranslatePage: React.FC = () => {
   const [settings, setSettings] = useState(getSettings());
+  const [signs, setSigns] = useState(() => getSigns());
   const [is100Mode, setIs100Mode] = useState(true);
   const [transcript, setTranscript] = useState<string>('');
   const [currentPrediction, setCurrentPrediction] = useState<{
@@ -47,7 +48,10 @@ const TranslatePage: React.FC = () => {
   const latestPredictionTimeRef = useRef<number>(0);
 
   useEffect(() => {
-    const handleStorageChange = () => setSettings(getSettings());
+    const handleStorageChange = () => {
+      setSettings(getSettings());
+      setSigns(getSigns());
+    };
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
@@ -319,12 +323,12 @@ const TranslatePage: React.FC = () => {
         <div className="glass px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-2 border border-white/10">
           <span className="text-gray-400">Enrolled library signs:</span>
           <span className="font-bold text-sky-400">
-            {getSigns().filter((s) => s.takes.length > 0).length} active
+            {signs.filter((s) => s.takes && s.takes.length > 0).length} active
           </span>
         </div>
       </div>
 
-      {getSigns().filter((s) => s.takes.length > 0).length === 0 && (
+      {signs.filter((s) => s.takes && s.takes.length > 0).length === 0 && (
         <div className="mb-6 p-4 glass rounded-2xl border border-amber-500/30 bg-amber-500/5 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <span className="text-2xl">💡</span>
