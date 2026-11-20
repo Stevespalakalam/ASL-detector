@@ -37,6 +37,12 @@ const TranslatePage: React.FC = () => {
   const [handsDetected, setHandsDetected] = useState(0);
   const [copied, setCopied] = useState(false);
 
+  // 5-second transition time breaker state
+  const [cooldownSeconds, setCooldownSeconds] = useState<number>(0);
+  const [lastCommittedSign, setLastCommittedSign] = useState<string | null>(null);
+  const cooldownEndRef = useRef<number>(0);
+  const cooldownTimerRef = useRef<any>(null);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const lastWordRef = useRef<string>('');
@@ -46,6 +52,14 @@ const TranslatePage: React.FC = () => {
   const isComponentMounted = useRef<boolean>(true);
   const isProcessingRef = useRef<boolean>(false);
   const latestPredictionTimeRef = useRef<number>(0);
+
+  // Skip delay function if user is already switched and ready
+  const handleSkipCooldown = useCallback(() => {
+    if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current);
+    cooldownTimerRef.current = null;
+    cooldownEndRef.current = 0;
+    setCooldownSeconds(0);
+  }, []);
 
   useEffect(() => {
     const handleStorageChange = () => {
@@ -89,13 +103,34 @@ const TranslatePage: React.FC = () => {
           const matchResult = await liveTranslate(primaryHand);
           setCurrentPrediction(matchResult);
 
-          // Handle transcript appending on sustained high confidence
+          // Handle transcript appending with a 5-second transition time breaker
           if (matchResult.label) {
             const passes = matchResult.confidence >= settings.confidenceThreshold;
             if ((is100Mode && passes) || !is100Mode) {
-              if (matchResult.label !== lastWordRef.current) {
-                setTranscript((prev) => `${prev} ${matchResult.label}`.trim());
-                lastWordRef.current = matchResult.label!;
+              const currentTimestamp = Date.now();
+              // Only commit if outside the 5-second switch window
+              if (currentTimestamp >= cooldownEndRef.current) {
+                if (matchResult.label !== lastWordRef.current) {
+                  setTranscript((prev) => `${prev} ${matchResult.label}`.trim());
+                  lastWordRef.current = matchResult.label!;
+                  setLastCommittedSign(matchResult.label!);
+
+                  // Start 5-second switch breaker
+                  const cooldownMs = 5000;
+                  cooldownEndRef.current = currentTimestamp + cooldownMs;
+                  setCooldownSeconds(5);
+
+                  if (cooldownTimerRef.current) clearInterval(cooldownTimerRef.current);
+                  cooldownTimerRef.current = setInterval(() => {
+                    const remaining = Math.max(0, Math.ceil((cooldownEndRef.current - Date.now()) / 1000));
+                    setCooldownSeconds(remaining);
+                    if (remaining <= 0) {
+                      clearInterval(cooldownTimerRef.current);
+                      cooldownTimerRef.current = null;
+                      cooldownEndRef.current = 0;
+                    }
+                  }, 200);
+                }
               }
             } else {
               lastWordRef.current = '';
@@ -269,6 +304,10 @@ const TranslatePage: React.FC = () => {
     return () => {
       isComponentMounted.current = false;
       cancelAnimationFrame(animFrameRef.current);
+      if (cooldownTimerRef.current) {
+        clearInterval(cooldownTimerRef.current);
+        cooldownTimerRef.current = null;
+      }
       if (streamRef.current) {
         streamRef.current.getTracks().forEach((t) => t.stop());
         streamRef.current = null;
@@ -398,6 +437,41 @@ const TranslatePage: React.FC = () => {
                 >
                   Stop Camera
                 </button>
+              </div>
+            )}
+
+            {/* 5-Second Transition Time Breaker Floating HUD */}
+            {isCameraOn && cooldownSeconds > 0 && (
+              <div className="absolute top-14 left-1/2 -translate-x-1/2 z-40 w-11/12 max-w-sm pointer-events-auto">
+                <div className="glass px-4 py-3 rounded-2xl border border-sky-400/40 bg-sky-950/85 shadow-2xl backdrop-blur-xl flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-green-400 animate-ping" />
+                      <p className="text-sm font-bold text-white">
+                        Recorded <span className="text-sky-300 font-extrabold uppercase tracking-wide">"{lastCommittedSign}"</span>
+                      </p>
+                    </div>
+                    <span className="text-xs font-mono font-bold text-sky-200 bg-sky-500/30 px-2.5 py-0.5 rounded-lg border border-sky-400/30">
+                      Switch in {cooldownSeconds}s
+                    </span>
+                  </div>
+                  {/* Animated 5s countdown progress bar */}
+                  <div className="w-full bg-white/10 rounded-full h-1.5 overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-sky-400 via-violet-400 to-green-400 transition-all duration-200 rounded-full"
+                      style={{ width: `${Math.min(100, Math.max(5, ((5 - cooldownSeconds + 0.2) / 5) * 100))}%` }}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between text-[11px] text-gray-300">
+                    <span>Switch to your next sign comfortably</span>
+                    <button
+                      onClick={handleSkipCooldown}
+                      className="text-sky-400 hover:text-white font-semibold underline transition-colors"
+                    >
+                      Ready now ⚡
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
 
