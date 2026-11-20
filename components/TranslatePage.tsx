@@ -6,6 +6,7 @@ import Button from './Button';
 import CopyIcon from './icons/CopyIcon';
 import ClearIcon from './icons/ClearIcon';
 import { Link } from 'react-router-dom';
+import { Landmark } from '../types';
 
 const HAND_CONNECTIONS_MAP: [number, number][] = [
   // Thumb
@@ -18,13 +19,19 @@ const HAND_CONNECTIONS_MAP: [number, number][] = [
   [9, 13], [13, 14], [14, 15], [15, 16],
   // Pinky finger
   [13, 17], [0, 17], [17, 18], [18, 19], [19, 20],
+  // Palm cross connections
+  [5, 9], [9, 13], [13, 17]
 ];
 
 const TranslatePage: React.FC = () => {
   const [settings, setSettings] = useState(getSettings());
   const [is100Mode, setIs100Mode] = useState(true);
   const [transcript, setTranscript] = useState<string>('');
-  const [currentPrediction, setCurrentPrediction] = useState<{ label: string | null; confidence: number }>({ label: null, confidence: 0 });
+  const [currentPrediction, setCurrentPrediction] = useState<{
+    label: string | null;
+    confidence: number;
+    similarities?: { label: string; confidence: number }[];
+  }>({ label: null, confidence: 0, similarities: [] });
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [handsDetected, setHandsDetected] = useState(0);
   const [copied, setCopied] = useState(false);
@@ -37,6 +44,7 @@ const TranslatePage: React.FC = () => {
   const animFrameRef = useRef<number>(0);
   const isComponentMounted = useRef<boolean>(true);
   const isProcessingRef = useRef<boolean>(false);
+  const latestPredictionTimeRef = useRef<number>(0);
 
   useEffect(() => {
     const handleStorageChange = () => setSettings(getSettings());
@@ -44,8 +52,8 @@ const TranslatePage: React.FC = () => {
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
 
-  // ── High Accuracy Hand Skeleton Drawing ────────────────────────────────
-  const drawHandSkeleton = useCallback((results: any) => {
+  // ── High Accuracy Hand Skeleton & Joint Tracking ───────────────────────
+  const drawHandSkeletonAndPredict = useCallback(async (results: any) => {
     if (!isComponentMounted.current) return;
 
     const canvas = canvasRef.current;
@@ -66,7 +74,33 @@ const TranslatePage: React.FC = () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      const primaryHand: Landmark[] = results.multiHandLandmarks[0];
       setHandsDetected(results.multiHandLandmarks.length);
+
+      // Perform real gesture similarity prediction against enrolled sign templates
+      const now = performance.now();
+      if (now - latestPredictionTimeRef.current > 80) { // Update prediction every 80ms for responsiveness
+        latestPredictionTimeRef.current = now;
+        try {
+          const matchResult = await liveTranslate(primaryHand);
+          setCurrentPrediction(matchResult);
+
+          // Handle transcript appending on sustained high confidence
+          if (matchResult.label) {
+            const passes = matchResult.confidence >= settings.confidenceThreshold;
+            if ((is100Mode && passes) || !is100Mode) {
+              if (matchResult.label !== lastWordRef.current) {
+                setTranscript((prev) => `${prev} ${matchResult.label}`.trim());
+                lastWordRef.current = matchResult.label!;
+              }
+            } else {
+              lastWordRef.current = '';
+            }
+          } else {
+            lastWordRef.current = '';
+          }
+        } catch (_) {}
+      }
 
       for (const landmarks of results.multiHandLandmarks) {
         // 1. Draw glowing skeleton connection lines
@@ -101,6 +135,7 @@ const TranslatePage: React.FC = () => {
 
           ctx.save();
           if (isFingertip) {
+            // Fingertip points
             ctx.beginPath();
             ctx.arc(x, y, 6.5, 0, 2 * Math.PI);
             ctx.fillStyle = '#22c55e'; // Bright green
@@ -111,6 +146,7 @@ const TranslatePage: React.FC = () => {
             ctx.lineWidth = 2;
             ctx.stroke();
           } else if (isWrist) {
+            // Wrist anchor point
             ctx.beginPath();
             ctx.arc(x, y, 7, 0, 2 * Math.PI);
             ctx.fillStyle = '#a855f7';
@@ -121,6 +157,7 @@ const TranslatePage: React.FC = () => {
             ctx.lineWidth = 2;
             ctx.stroke();
           } else {
+            // Knuckle and finger joints
             ctx.beginPath();
             ctx.arc(x, y, 4, 0, 2 * Math.PI);
             ctx.fillStyle = '#ffffff';
@@ -134,8 +171,10 @@ const TranslatePage: React.FC = () => {
       }
     } else {
       setHandsDetected(0);
+      setCurrentPrediction({ label: null, confidence: 0, similarities: [] });
+      lastWordRef.current = '';
     }
-  }, []);
+  }, [is100Mode, settings.confidenceThreshold]);
 
   // ── Sequential Non-overlapping Frame Inference Loop ────────────────────
   const scheduleNextFrame = useCallback(() => {
@@ -152,7 +191,7 @@ const TranslatePage: React.FC = () => {
         try {
           await hands.send({ image: video });
         } catch (_) {
-          // Ignore single frame error
+          // Ignore dropped frame
         } finally {
           isProcessingRef.current = false;
         }
@@ -200,7 +239,7 @@ const TranslatePage: React.FC = () => {
               minTrackingConfidence: 0.5,
             });
 
-            hands.onResults(drawHandSkeleton);
+            hands.onResults(drawHandSkeletonAndPredict);
 
             if (isComponentMounted.current) {
               handsRef.current = hands;
@@ -239,30 +278,7 @@ const TranslatePage: React.FC = () => {
       if (videoRef.current) videoRef.current.srcObject = null;
       setHandsDetected(0);
     };
-  }, [isCameraOn, drawHandSkeleton, scheduleNextFrame]);
-
-  // ── Translation interval ─────────────────────────────────────────────
-  useEffect(() => {
-    if (!isCameraOn) return;
-    const id = window.setInterval(async () => {
-      const result = await liveTranslate();
-      setCurrentPrediction(result);
-      if (result.label) {
-        const passes = result.confidence >= settings.confidenceThreshold;
-        if ((is100Mode && passes) || !is100Mode) {
-          if (result.label !== lastWordRef.current) {
-            setTranscript((prev) => `${prev} ${result.label}`.trim());
-            lastWordRef.current = result.label!;
-          }
-        } else {
-          lastWordRef.current = '';
-        }
-      } else {
-        lastWordRef.current = '';
-      }
-    }, 500);
-    return () => clearInterval(id);
-  }, [isCameraOn, is100Mode, settings.confidenceThreshold]);
+  }, [isCameraOn, drawHandSkeletonAndPredict, scheduleNextFrame]);
 
   const handleCopy = () => {
     if (!transcript) return;
@@ -295,7 +311,9 @@ const TranslatePage: React.FC = () => {
       {/* Page title */}
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-white">Live Translation</h2>
-        <p className="text-sm text-gray-400 mt-1">Point your hands at the camera. Real-time joint tracking and translation.</p>
+        <p className="text-sm text-gray-400 mt-1">
+          Tracking all 21 hand joints in real time with mathematical gesture similarity matching.
+        </p>
       </div>
 
       <div className="flex flex-col lg:flex-row gap-6">
@@ -329,7 +347,7 @@ const TranslatePage: React.FC = () => {
                   </svg>
                 </div>
                 <p className="text-gray-300 font-medium mb-2">Camera is off</p>
-                <p className="text-gray-500 text-sm mb-6">Hand landmarks will appear when camera starts</p>
+                <p className="text-gray-500 text-sm mb-6">Start camera to track hand points and translate signs</p>
                 <Button onClick={() => setIsCameraOn(true)} size="lg">
                   Start Camera
                 </Button>
@@ -341,7 +359,9 @@ const TranslatePage: React.FC = () => {
               <div className="absolute top-3 left-3 right-3 flex items-center justify-between z-40">
                 <div className="flex items-center gap-2 glass px-3.5 py-1.5 rounded-full text-xs font-medium">
                   <span className={`w-2 h-2 rounded-full ${handsDetected > 0 ? 'bg-green-400' : 'bg-gray-500'}`} />
-                  {handsDetected > 0 ? `● Tracking ${handsDetected} hand${handsDetected > 1 ? 's' : ''}` : 'No hands in frame'}
+                  {handsDetected > 0
+                    ? `● Tracking 21 points (${handsDetected} hand${handsDetected > 1 ? 's' : ''})`
+                    : 'Show hand to camera'}
                 </div>
                 <button
                   onClick={() => setIsCameraOn(false)}
@@ -352,25 +372,51 @@ const TranslatePage: React.FC = () => {
               </div>
             )}
 
-            {/* Bottom detection badge */}
+            {/* Bottom detection badge with real-time similarity metrics */}
             {isCameraOn && (
-              <div className="absolute bottom-3 left-3 z-40">
-                <div className="glass px-4 py-3 rounded-xl">
-                  <p className="text-xs text-gray-400 mb-0.5">Detected Sign</p>
-                  <div className="flex items-baseline gap-3">
-                    <p className="text-2xl font-bold capitalize text-white">{currentPrediction.label ?? '—'}</p>
-                    <p className={`text-base font-mono font-semibold ${confidenceColor}`}>
-                      {(currentPrediction.confidence * 100).toFixed(1)}%
-                    </p>
+              <div className="absolute bottom-3 left-3 right-3 sm:right-auto z-40">
+                <div className="glass px-4 py-3 rounded-2xl border border-white/10 backdrop-blur-md">
+                  <div className="flex items-baseline justify-between gap-4">
+                    <div>
+                      <p className="text-xs text-gray-400 mb-0.5">Detected Gesture</p>
+                      <p className="text-2xl font-bold capitalize text-white">
+                        {currentPrediction.label ?? (handsDetected > 0 ? 'Analyzing gesture...' : '—')}
+                      </p>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-xs text-gray-400 mb-0.5">Similarity</p>
+                      <p className={`text-xl font-mono font-bold ${confidenceColor}`}>
+                        {(currentPrediction.confidence * 100).toFixed(1)}%
+                      </p>
+                    </div>
                   </div>
-                  {is100Mode && currentPrediction.label && currentPrediction.confidence < settings.confidenceThreshold && (
-                    <p className="text-amber-400 text-xs mt-1">↻ Hold sign clearly</p>
+
+                  {/* Real-time candidate similarity breakdown */}
+                  {currentPrediction.similarities && currentPrediction.similarities.length > 0 && (
+                    <div className="mt-2.5 pt-2 border-t border-white/10 flex flex-wrap gap-2 text-xs">
+                      {currentPrediction.similarities.map((item) => (
+                        <span
+                          key={item.label}
+                          className={`px-2 py-0.5 rounded-lg border font-mono ${
+                            item.label === currentPrediction.label && item.confidence >= settings.confidenceThreshold
+                              ? 'bg-green-500/20 border-green-500/40 text-green-300 font-bold'
+                              : 'bg-white/5 border-white/10 text-gray-400'
+                          }`}
+                        >
+                          {item.label}: {(item.confidence * 100).toFixed(0)}%
+                        </span>
+                      ))}
+                    </div>
                   )}
-                  {!currentPrediction.label && currentPrediction.confidence < settings.confidenceThreshold && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      Unknown.{' '}
+
+                  {is100Mode && currentPrediction.label && currentPrediction.confidence < settings.confidenceThreshold && (
+                    <p className="text-amber-400 text-xs mt-1.5 font-medium">↻ Hold pose steady to reach threshold</p>
+                  )}
+                  {!currentPrediction.label && handsDetected > 0 && currentPrediction.confidence < settings.confidenceThreshold && (
+                    <p className="text-xs text-gray-400 mt-1.5">
+                      Gesture doesn't match library.{' '}
                       <Link to="/library" className="text-sky-400 hover:underline">
-                        Enroll a sign?
+                        Enroll this sign?
                       </Link>
                     </p>
                   )}
@@ -380,12 +426,12 @@ const TranslatePage: React.FC = () => {
           </div>
         </div>
 
-        {/* ── Right Panel ── */}
+        {/* ── Right Panel: Transcript & Settings ── */}
         <div className="lg:w-1/3 flex flex-col gap-4">
           {/* Transcript */}
           <div className="glass rounded-2xl p-5 flex-1 flex flex-col">
             <div className="flex items-center justify-between mb-3">
-              <h3 className="font-semibold text-white">Transcript</h3>
+              <h3 className="font-semibold text-white">Translated Text</h3>
               <div className="flex gap-2">
                 <button
                   onClick={handleCopy}
@@ -409,7 +455,7 @@ const TranslatePage: React.FC = () => {
               {transcript ? (
                 <p className="text-base leading-relaxed text-white/90 whitespace-pre-wrap">{transcript}</p>
               ) : (
-                <p className="text-gray-600 italic text-sm">Signs you perform will appear here…</p>
+                <p className="text-gray-500 italic text-sm">Recognized signs will appear here automatically...</p>
               )}
               {copied && (
                 <div className="absolute top-2 right-2 toast glass px-2 py-1 rounded-lg text-xs text-green-400">
@@ -421,13 +467,13 @@ const TranslatePage: React.FC = () => {
 
           {/* Settings */}
           <div className="glass rounded-2xl p-5">
-            <h3 className="font-semibold text-white mb-4">Settings</h3>
+            <h3 className="font-semibold text-white mb-4">Detection Settings</h3>
 
             {/* No-mistake mode toggle */}
             <div className="flex items-center justify-between mb-4">
               <div>
                 <p className="text-sm font-medium text-gray-200">"No Mistake" Mode</p>
-                <p className="text-xs text-gray-500 mt-0.5">Only adds high-confidence signs</p>
+                <p className="text-xs text-gray-500 mt-0.5">Only translates when similarity is high</p>
               </div>
               <button
                 onClick={() => setIs100Mode(!is100Mode)}
@@ -446,13 +492,13 @@ const TranslatePage: React.FC = () => {
             {/* Threshold slider */}
             <div className={`transition-opacity ${is100Mode ? 'opacity-100' : 'opacity-40 pointer-events-none'}`}>
               <div className="flex justify-between text-xs text-gray-400 mb-2">
-                <label>Confidence Threshold</label>
+                <label>Similarity Threshold</label>
                 <span className="font-mono text-sky-400 font-semibold">{Math.round(settings.confidenceThreshold * 100)}%</span>
               </div>
               <input
                 type="range"
                 min="0.50"
-                max="1.0"
+                max="0.95"
                 step="0.01"
                 value={settings.confidenceThreshold}
                 onChange={handleThresholdChange}
@@ -460,8 +506,8 @@ const TranslatePage: React.FC = () => {
                 disabled={!is100Mode}
               />
               <div className="flex justify-between text-xs text-gray-600 mt-1">
-                <span>50%</span>
-                <span>100%</span>
+                <span>50% (Fast)</span>
+                <span>95% (Strict)</span>
               </div>
             </div>
           </div>

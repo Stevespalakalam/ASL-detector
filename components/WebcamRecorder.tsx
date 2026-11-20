@@ -1,6 +1,7 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import Button from './Button';
+import { Landmark } from '../types';
 
 // MediaPipe 21 hand joints connections
 const HAND_CONNECTIONS_MAP: [number, number][] = [
@@ -14,11 +15,13 @@ const HAND_CONNECTIONS_MAP: [number, number][] = [
   [9, 13], [13, 14], [14, 15], [15, 16],
   // Pinky finger
   [13, 17], [0, 17], [17, 18], [18, 19], [19, 20],
+  // Palm cross connections
+  [5, 9], [9, 13], [13, 17]
 ];
 
 interface WebcamRecorderProps {
   onClose: () => void;
-  onSave: (videoUrl: string) => Promise<void> | void;
+  onSave: (videoUrl: string, landmarks?: Landmark[]) => Promise<void> | void;
   signLabel: string;
 }
 
@@ -33,6 +36,10 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
   const isComponentMounted = useRef<boolean>(true);
   const isProcessingRef = useRef<boolean>(false);
 
+  // Buffer to capture 21 landmarks on every frame during recording
+  const recordedLandmarksBufferRef = useRef<Landmark[][]>([]);
+  const latestLandmarksRef = useRef<Landmark[] | null>(null);
+
   const [isRecording, setIsRecording] = useState(false);
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -41,7 +48,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
   const [isSaving, setIsSaving] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
 
-  // ── High Accuracy Hand Skeleton Drawing ────────────────────────────────
+  // ── High Accuracy Hand Skeleton & Dot Tracker ──────────────────────────
   const drawHandSkeleton = useCallback((results: any) => {
     if (!isComponentMounted.current || recordedBlobRef.current) return;
 
@@ -63,13 +70,20 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+      const primaryHand: Landmark[] = results.multiHandLandmarks[0];
+      latestLandmarksRef.current = primaryHand;
       setHandsDetected(results.multiHandLandmarks.length);
+
+      // If active recording is in progress, buffer these 21 landmarks
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        recordedLandmarksBufferRef.current.push(primaryHand);
+      }
 
       for (const landmarks of results.multiHandLandmarks) {
         // 1. Draw glowing skeleton connection lines
         ctx.save();
         ctx.lineWidth = 3;
-        ctx.strokeStyle = '#00f0ff'; // Neon cyan tracking lines
+        ctx.strokeStyle = '#00f0ff'; // Neon cyan lines
         ctx.shadowColor = '#00f0ff';
         ctx.shadowBlur = 8;
         ctx.lineCap = 'round';
@@ -87,7 +101,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
         }
         ctx.restore();
 
-        // 2. Draw all 21 joint landmark dots
+        // 2. Draw all 21 landmark dot points inside the hand
         for (let i = 0; i < landmarks.length; i++) {
           const lm = landmarks[i];
           const x = lm.x * canvas.width;
@@ -98,7 +112,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
 
           ctx.save();
           if (isFingertip) {
-            // Prominent glowing fingertip targets
+            // Prominent fingertip targets
             ctx.beginPath();
             ctx.arc(x, y, 6.5, 0, 2 * Math.PI);
             ctx.fillStyle = '#22c55e'; // Bright green for fingertips
@@ -120,7 +134,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
             ctx.lineWidth = 2;
             ctx.stroke();
           } else {
-            // Finger joint points
+            // Internal knuckle & joint dots
             ctx.beginPath();
             ctx.arc(x, y, 4, 0, 2 * Math.PI);
             ctx.fillStyle = '#ffffff';
@@ -134,10 +148,11 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
       }
     } else {
       setHandsDetected(0);
+      latestLandmarksRef.current = null;
     }
   }, []);
 
-  // ── Sequential Non-overlapping Frame Inference Loop ────────────────────
+  // ── Sequential Frame Inference Loop ───────────────────────────────────
   const scheduleNextFrame = useCallback(() => {
     if (!isComponentMounted.current || recordedBlobRef.current) return;
 
@@ -151,19 +166,18 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
         isProcessingRef.current = true;
         try {
           await hands.send({ image: video });
-        } catch (e) {
-          // Catch and ignore single frame drop without crashing the loop
+        } catch (_) {
+          // Ignore dropped frame
         } finally {
           isProcessingRef.current = false;
         }
       }
 
-      // Schedule the next frame only after the current one has resolved
       scheduleNextFrame();
     });
   }, []);
 
-  // ── Initialize Camera & MediaPipe Hands ────────────────────────────────
+  // ── Camera and MediaPipe Setup ────────────────────────────────────────
   useEffect(() => {
     isComponentMounted.current = true;
 
@@ -190,7 +204,6 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
         }
         setCameraReady(true);
 
-        // Wait for MediaPipe Hands to be ready on window
         const initMediaPipe = () => {
           const MP_Hands = (window as any).Hands;
           if (typeof MP_Hands !== 'undefined') {
@@ -212,7 +225,6 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
               scheduleNextFrame();
             }
           } else {
-            // If script is still initializing, retry briefly
             setTimeout(initMediaPipe, 100);
           }
         };
@@ -286,6 +298,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
       setRecordedUrl(null);
     }
     recordedBlobRef.current = null;
+    recordedLandmarksBufferRef.current = [];
 
     const chunks: Blob[] = [];
 
@@ -335,13 +348,45 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
     }
     setRecordedUrl(null);
     recordedBlobRef.current = null;
+    recordedLandmarksBufferRef.current = [];
 
     if (liveVideoRef.current && streamRef.current) {
       liveVideoRef.current.play().catch(() => {});
     }
 
-    // Resume tracking loop
     scheduleNextFrame();
+  };
+
+  // Computes the representative 21-landmark pose from the buffered recording
+  const computeRepresentativeLandmarks = (): Landmark[] | undefined => {
+    const buffer = recordedLandmarksBufferRef.current;
+    if (buffer.length === 0) {
+      return latestLandmarksRef.current ?? undefined;
+    }
+
+    // Take the middle 60% of recorded frames to avoid transition at start/end
+    const startIdx = Math.floor(buffer.length * 0.2);
+    const endIdx = Math.max(startIdx + 1, Math.floor(buffer.length * 0.8));
+    const steadyFrames = buffer.slice(startIdx, endIdx);
+
+    const avgLandmarks: Landmark[] = [];
+    for (let i = 0; i < 21; i++) {
+      let sumX = 0;
+      let sumY = 0;
+      let sumZ = 0;
+      for (const frame of steadyFrames) {
+        sumX += frame[i].x;
+        sumY += frame[i].y;
+        sumZ += frame[i].z ?? 0;
+      }
+      avgLandmarks.push({
+        x: sumX / steadyFrames.length,
+        y: sumY / steadyFrames.length,
+        z: sumZ / steadyFrames.length,
+      });
+    }
+
+    return avgLandmarks;
   };
 
   const handleSave = async () => {
@@ -358,7 +403,10 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
       reader.readAsDataURL(blob);
       const dataUrl = await dataUrlPromise;
 
-      await onSave(dataUrl);
+      // Extract captured 21 hand points
+      const capturedLandmarks = computeRepresentativeLandmarks();
+
+      await onSave(dataUrl, capturedLandmarks);
       onClose();
     } catch (err) {
       console.error('Error saving recorded video take:', err);
@@ -399,7 +447,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
 
         {/* Video Canvas Container */}
         <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
-          {/* 1. Live Camera View (Active when NOT in recorded preview) */}
+          {/* 1. Live Camera View */}
           <div className={`relative w-full h-full ${recordedUrl ? 'hidden' : 'block'}`}>
             <video
               ref={liveVideoRef}
@@ -416,7 +464,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
             />
           </div>
 
-          {/* 2. Recorded Video Preview (Active when previewing take) */}
+          {/* 2. Recorded Video Preview */}
           {recordedUrl && (
             <div className="relative w-full h-full flex items-center justify-center bg-black">
               <video
@@ -448,14 +496,16 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
               {isRecording ? (
                 <div className="flex items-center gap-2 glass px-3.5 py-1.5 rounded-full pointer-events-auto">
                   <span className="w-2.5 h-2.5 rounded-full bg-red-500 rec-dot" />
-                  <span className="text-xs font-bold text-red-400 tracking-wider">REC {formatTime(recordingTime)}</span>
+                  <span className="text-xs font-bold text-red-400 tracking-wider">
+                    REC {formatTime(recordingTime)} ({recordedLandmarksBufferRef.current.length} landmark frames)
+                  </span>
                 </div>
               ) : (
                 <div className="flex items-center gap-2 glass px-3.5 py-1.5 rounded-full pointer-events-auto">
                   <span className={`w-2 h-2 rounded-full ${handsDetected > 0 ? 'bg-green-400' : 'bg-gray-500'}`} />
                   <span className="text-xs font-medium text-gray-200">
                     {handsDetected > 0
-                      ? `● Tracking ${handsDetected} hand${handsDetected > 1 ? 's' : ''}`
+                      ? `● Tracking 21 joint points (${handsDetected} hand${handsDetected > 1 ? 's' : ''})`
                       : 'Position hands in camera view'}
                   </span>
                 </div>
@@ -466,7 +516,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
           {/* Recorded Preview Badge */}
           {recordedUrl && (
             <div className="absolute top-3 left-3 glass px-3.5 py-1.5 rounded-full text-xs font-semibold text-green-400 flex items-center gap-1.5 z-40">
-              <span>✓</span> Previewing Take
+              <span>✓</span> Previewing Take ({recordedLandmarksBufferRef.current.length} points analyzed)
             </div>
           )}
         </div>
@@ -515,7 +565,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
                 {isSaving ? (
                   <span className="flex items-center gap-2">
                     <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    Saving Take...
+                    Saving Points & Video...
                   </span>
                 ) : (
                   '✓ Save Take'
@@ -528,7 +578,7 @@ const WebcamRecorder: React.FC<WebcamRecorderProps> = ({ onClose, onSave, signLa
         {/* Helpful Tip */}
         {!recordedUrl && !isRecording && countdown === null && (
           <p className="text-center text-xs text-gray-500 pb-3">
-            Tip: Perform your ASL sign clearly. When tracking lines lock on your hands, start recording.
+            Hold your ASL hand gesture steady. Every joint point is tracked and stored as your gesture reference template.
           </p>
         )}
       </div>

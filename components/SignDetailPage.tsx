@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import * as DataService from '../services/dataService';
-import { Sign } from '../types';
+import { Sign, Landmark } from '../types';
 import Button from './Button';
 import WebcamRecorder from './WebcamRecorder';
 import ConfidenceMeter from './ConfidenceMeter';
@@ -35,11 +35,11 @@ const SignDetailPage: React.FC = () => {
     return () => window.removeEventListener('storage', loadSign);
   }, [loadSign]);
 
-  const handleAddTake = async (videoUrl: string) => {
+  const handleAddTake = async (videoUrl: string, landmarks?: Landmark[]) => {
     if (!signId) return;
     setIsLoading(true);
     try {
-      const updated = await DataService.addTake(signId, videoUrl);
+      const updated = await DataService.addTake(signId, videoUrl, landmarks);
       setSign({ ...updated });
     } catch (err) {
       console.error('Error adding take:', err);
@@ -145,7 +145,7 @@ const SignDetailPage: React.FC = () => {
           {isLoading && (
             <div className="flex items-center gap-3 text-sm text-sky-400 glass rounded-xl px-4 py-3">
               <div className="w-4 h-4 border-2 border-sky-400 border-t-transparent rounded-full animate-spin" />
-              Processing sample and recalculating confidence...
+              Processing MediaPipe landmarks and updating sign confidence...
             </div>
           )}
 
@@ -188,8 +188,9 @@ const SignDetailPage: React.FC = () => {
                       playsInline
                       className="w-full aspect-video object-cover bg-black"
                     />
-                    <div className="absolute top-2 left-2 glass px-2 py-0.5 rounded-full text-xs text-gray-300 pointer-events-none">
-                      #{i + 1}
+                    <div className="absolute top-2 left-2 glass px-2 py-0.5 rounded-full text-xs text-gray-300 pointer-events-none flex items-center gap-1">
+                      <span>#{i + 1}</span>
+                      {take.landmarks && <span className="text-[10px] text-sky-400">● 21 pts</span>}
                     </div>
                     <button
                       onClick={() => handleDeleteTake(take.id)}
@@ -206,7 +207,7 @@ const SignDetailPage: React.FC = () => {
                 <p className="text-3xl mb-3">🎬</p>
                 <p className="text-gray-300 text-sm font-medium">No samples recorded yet</p>
                 <p className="text-gray-500 text-xs mt-1">
-                  Record 5 short takes of this sign to train the recognition model.
+                  Record 5 short takes. MediaPipe will capture all 21 hand points to train gesture matching.
                 </p>
                 <Button onClick={() => setIsRecording(true)} className="mt-4">
                   <VideoIcon className="w-4 h-4" /> Record First Sample

@@ -1,64 +1,67 @@
 
-import { Take, Sign } from '../types';
+import { Take, Landmark, MatchResult } from '../types';
 import { getSigns, getSettings } from './dataService';
-
-// This is a simulated service. In a real application, this would
-// make API calls to a backend that interfaces with the Gemini API.
+import { calculateHandSimilarity, predictGesture } from './gestureService';
 
 /**
- * Simulates analyzing video takes and updating the confidence score for a sign.
- * The confidence increases with the number of samples, simulating model training.
+ * Calculates the model confidence score for a sign based on:
+ * 1. Number of collected samples toward minSamples (5)
+ * 2. Real geometric consistency across recorded hand landmark takes
  * @param takes - An array of video takes for a sign.
  * @returns A promise that resolves to a confidence score between 0 and 1.
  */
 export const updateSignConfidence = async (takes: Take[]): Promise<number> => {
   const { minSamples } = getSettings();
-  
-  // Simulate processing delay
-  await new Promise(resolve => setTimeout(resolve, 500));
-  
-  if (takes.length === 0) {
+
+  if (!takes || takes.length === 0) {
     return 0;
   }
-  
-  // Confidence grows logarithmically and then flattens out.
-  // This simulates diminishing returns from adding more samples.
-  // It's tuned to approach 1.0 around the `minSamples` mark.
-  const baseConfidence = Math.log(takes.length + 1) / Math.log(minSamples + 1);
-  const cappedConfidence = Math.min(baseConfidence * 1.1, 1.0); // Allow it to slightly overshoot 1 before capping
-  
-  // Add some randomness to simulate real-world model variance
-  const randomFactor = (Math.random() - 0.5) * 0.05; // +/- 2.5% variance
-  const finalConfidence = Math.max(0, Math.min(1, cappedConfidence + randomFactor));
-  
-  return parseFloat(finalConfidence.toFixed(4));
+
+  // Base progress toward the 5-sample target (logarithmic growth tuned for minSamples=5)
+  const baseProgress = Math.min(1.0, takes.length / minSamples);
+
+  // Measure consistency across takes that have landmarks recorded
+  const takesWithLandmarks = takes.filter((t) => t.landmarks && t.landmarks.length >= 21);
+  let consistencyScore = 0.95;
+
+  if (takesWithLandmarks.length >= 2) {
+    let totalPairwiseSim = 0;
+    let pairsCount = 0;
+    for (let i = 0; i < takesWithLandmarks.length; i++) {
+      for (let j = i + 1; j < takesWithLandmarks.length; j++) {
+        const sim = calculateHandSimilarity(
+          takesWithLandmarks[i].landmarks!,
+          takesWithLandmarks[j].landmarks!
+        );
+        totalPairwiseSim += sim;
+        pairsCount++;
+      }
+    }
+    if (pairsCount > 0) {
+      consistencyScore = totalPairwiseSim / pairsCount;
+    }
+  }
+
+  // Weighted confidence: 60% sample quantity progression, 40% landmark consistency
+  const finalScore = 0.6 * baseProgress + 0.4 * (baseProgress * consistencyScore);
+
+  // Cap between 0.0 and 1.0, reaching ~90-100% at 5 samples
+  return parseFloat(Math.min(1.0, Math.max(0, finalScore * 1.05)).toFixed(4));
 };
 
 /**
- * Simulates live translation by analyzing a "frame" from the webcam.
- * @returns A promise that resolves to a translation result.
+ * Predicts the sign from real live MediaPipe hand landmarks.
+ * @param liveLandmarks - Array of 21 3D hand landmarks from live camera
+ * @returns A promise that resolves to the match result.
  */
-export const liveTranslate = async (): Promise<{ label: string | null; confidence: number }> => {
-    const signs = getSigns();
-    const { confidenceThreshold, minSamples } = getSettings();
+export const liveTranslate = async (liveLandmarks?: Landmark[]): Promise<MatchResult> => {
+  const signs = getSigns();
+  const { confidenceThreshold } = getSettings();
 
-    const readySigns = signs.filter(s => s.confidence >= confidenceThreshold && s.takes.length >= minSamples);
+  if (!liveLandmarks || liveLandmarks.length < 21) {
+    return { label: null, confidence: 0, similarities: [] };
+  }
 
-    // Simulate processing delay
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // 70% chance to detect a known sign (if any are ready), 30% chance of unknown
-    if (readySigns.length > 0 && Math.random() < 0.7) {
-        // Pick a random "ready" sign to show as a prediction
-        const detectedSign = readySigns[Math.floor(Math.random() * readySigns.length)];
-        
-        // Simulate a high-confidence detection
-        const confidence = confidenceThreshold + (1 - confidenceThreshold) * Math.random();
-        
-        return { label: detectedSign.label, confidence: parseFloat(confidence.toFixed(4)) };
-    } else {
-        // Simulate an unknown sign or low-confidence detection
-        const confidence = Math.random() * (confidenceThreshold - 0.1); // Ensure confidence is below threshold
-        return { label: null, confidence: parseFloat(confidence.toFixed(4)) };
-    }
+  // Real-time gesture prediction comparing 21 landmarks against enrolled templates
+  return predictGesture(liveLandmarks, signs, confidenceThreshold);
 };

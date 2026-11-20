@@ -1,7 +1,8 @@
 
-import { Sign, Take, AppData } from '../types';
+import { Sign, Take, AppData, Landmark } from '../types';
 import { updateSignConfidence } from './geminiService';
 import { CONFIDENCE_THRESHOLD, MIN_SAMPLES } from '../constants';
+import { aggregateTakesToTemplate } from './gestureService';
 
 const APP_DATA_KEY = 'aslTranslateData';
 const DB_NAME = 'ASLTranslateDB';
@@ -17,14 +18,13 @@ const getDefaultData = (): AppData => ({
   },
 });
 
-// Normalize settings to ensure minSamples is 5 (not legacy 20)
+// Normalize settings to ensure minSamples is 5
 const normalizeSettings = (settings?: { confidenceThreshold: number; minSamples: number }) => {
   if (!settings) {
     return { confidenceThreshold: CONFIDENCE_THRESHOLD, minSamples: MIN_SAMPLES };
   }
   return {
     confidenceThreshold: typeof settings.confidenceThreshold === 'number' ? settings.confidenceThreshold : CONFIDENCE_THRESHOLD,
-    // If stored minSamples is still legacy 20 or undefined, force to MIN_SAMPLES (5)
     minSamples: settings.minSamples === 20 || !settings.minSamples ? MIN_SAMPLES : settings.minSamples,
   };
 };
@@ -95,7 +95,7 @@ const idbSet = async <T>(key: string, value: T): Promise<void> => {
   }
 };
 
-// Asynchronously load full data from IndexedDB into memory on startup
+// Sync from IndexedDB into memory on startup
 (async () => {
   try {
     const idbData = await idbGet<AppData>(DATA_RECORD_KEY);
@@ -106,7 +106,6 @@ const idbSet = async <T>(key: string, value: T): Promise<void> => {
       };
       window.dispatchEvent(new Event('storage'));
     } else if (cachedData.signs.length > 0) {
-      // Migrate initial localStorage data into IndexedDB
       await idbSet(DATA_RECORD_KEY, cachedData);
     }
   } catch (err) {
@@ -125,18 +124,14 @@ export const saveData = async (data: AppData): Promise<void> => {
   data.settings = normalizeSettings(data.settings);
   cachedData = data;
 
-  // Immediately notify UI components
   window.dispatchEvent(new Event('storage'));
 
-  // 1. Persist entire data (unlimited size, videos included) in IndexedDB
   try {
     await idbSet(DATA_RECORD_KEY, data);
   } catch (e) {
     console.error('Failed to save to IndexedDB:', e);
   }
 
-  // 2. Safely save lightweight metadata to localStorage as secondary cache
-  // Omit large base64 videos to prevent QuotaExceededError in localStorage
   try {
     const lightweightData: AppData = {
       settings: data.settings,
@@ -149,9 +144,7 @@ export const saveData = async (data: AppData): Promise<void> => {
       })),
     };
     localStorage.setItem(APP_DATA_KEY, JSON.stringify(lightweightData));
-  } catch {
-    // Quota exceeded in localStorage is completely safe to ignore since IndexedDB holds full videos
-  }
+  } catch {}
 };
 
 export const getSigns = (): Sign[] => {
@@ -176,7 +169,7 @@ export const addSign = (label: string): Sign => {
   return newSign;
 };
 
-export const addTake = async (signId: string, videoUrl: string): Promise<Sign> => {
+export const addTake = async (signId: string, videoUrl: string, landmarks?: Landmark[]): Promise<Sign> => {
   const data = loadData();
   const sign = data.signs.find((s) => s.id === signId);
   if (!sign) throw new Error('Sign not found');
@@ -186,9 +179,11 @@ export const addTake = async (signId: string, videoUrl: string): Promise<Sign> =
     signId,
     videoUrl,
     createdAt: new Date().toISOString(),
+    landmarks,
   };
 
   sign.takes.push(newTake);
+  sign.templateLandmarks = aggregateTakesToTemplate(sign.takes);
   sign.confidence = await updateSignConfidence(sign.takes);
 
   await saveData(data);
@@ -201,6 +196,7 @@ export const deleteTake = async (signId: string, takeId: string): Promise<Sign> 
   if (!sign) throw new Error('Sign not found');
 
   sign.takes = sign.takes.filter((t) => t.id !== takeId);
+  sign.templateLandmarks = aggregateTakesToTemplate(sign.takes);
   sign.confidence = await updateSignConfidence(sign.takes);
 
   await saveData(data);
