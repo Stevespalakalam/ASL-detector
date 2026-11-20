@@ -15,7 +15,7 @@ export const LANDMARK_NAMES = [
  * Normalizes 21 3D hand landmarks to be invariant to:
  * 1. Screen translation (centered at wrist)
  * 2. Distance from camera (scaled by wrist-to-middle-MCP distance)
- * 3. Incorporates finger curl ratios and inter-finger spread distances
+ * 3. Incorporates finger extension ratios and inter-finger spread distances
  */
 export const extractHandFeatureVector = (landmarks: Landmark[]): number[] => {
   if (!landmarks || landmarks.length < 21) {
@@ -105,7 +105,6 @@ const euclideanSimilarity = (a: number[], b: number[]): number => {
     sumSq += diff * diff;
   }
   const meanDistance = Math.sqrt(sumSq / a.length);
-  // Exponential decay: distance 0 -> 1.0, distance 0.5 -> ~0.4, distance 1.0 -> ~0.15
   return Math.exp(-1.8 * meanDistance);
 };
 
@@ -126,7 +125,6 @@ export const calculateHandSimilarity = (live: Landmark[], template: Landmark[]):
   const cosSim = Math.max(0, cosineSimilarity(liveVec, tmplVec));
   const eucSim = Math.max(0, euclideanSimilarity(liveVec, tmplVec));
 
-  // Balanced hybrid similarity
   const combined = 0.55 * cosSim + 0.45 * eucSim;
   return parseFloat(Math.min(1.0, Math.max(0, combined)).toFixed(4));
 };
@@ -160,86 +158,37 @@ export const aggregateTakesToTemplate = (takes: Take[]): Landmark[] | undefined 
   return avgLandmarks;
 };
 
-// ── Baseline Reference Gestures for Common Signs ──────────────────────────
-// Normalized landmark presets for standard ASL / gesture signs
-const BASELINE_TEMPLATES: Record<string, Landmark[]> = {
-  // Open palm with all fingers straight (e.g. Hello, 5, Stop)
-  hello: [
-    { x: 0.5, y: 0.85, z: 0 },
-    { x: 0.42, y: 0.76, z: -0.02 }, { x: 0.36, y: 0.66, z: -0.04 }, { x: 0.32, y: 0.58, z: -0.06 }, { x: 0.28, y: 0.51, z: -0.08 },
-    { x: 0.43, y: 0.56, z: -0.02 }, { x: 0.41, y: 0.45, z: -0.04 }, { x: 0.40, y: 0.37, z: -0.06 }, { x: 0.39, y: 0.29, z: -0.07 },
-    { x: 0.50, y: 0.54, z: -0.01 }, { x: 0.50, y: 0.42, z: -0.03 }, { x: 0.50, y: 0.33, z: -0.05 }, { x: 0.50, y: 0.25, z: -0.07 },
-    { x: 0.57, y: 0.56, z: -0.01 }, { x: 0.59, y: 0.45, z: -0.03 }, { x: 0.60, y: 0.37, z: -0.05 }, { x: 0.61, y: 0.30, z: -0.06 },
-    { x: 0.63, y: 0.60, z: -0.02 }, { x: 0.67, y: 0.51, z: -0.04 }, { x: 0.69, y: 0.45, z: -0.05 }, { x: 0.71, y: 0.39, z: -0.06 }
-  ],
-  // Closed fist (e.g. Yes, A, S)
-  yes: [
-    { x: 0.5, y: 0.8, z: 0 },
-    { x: 0.44, y: 0.73, z: -0.02 }, { x: 0.40, y: 0.66, z: -0.03 }, { x: 0.41, y: 0.60, z: -0.04 }, { x: 0.45, y: 0.56, z: -0.05 },
-    { x: 0.45, y: 0.58, z: -0.01 }, { x: 0.45, y: 0.64, z: -0.03 }, { x: 0.46, y: 0.69, z: -0.04 }, { x: 0.47, y: 0.72, z: -0.04 },
-    { x: 0.50, y: 0.57, z: -0.01 }, { x: 0.50, y: 0.63, z: -0.03 }, { x: 0.50, y: 0.69, z: -0.04 }, { x: 0.50, y: 0.72, z: -0.04 },
-    { x: 0.55, y: 0.58, z: -0.01 }, { x: 0.55, y: 0.64, z: -0.03 }, { x: 0.55, y: 0.69, z: -0.04 }, { x: 0.54, y: 0.72, z: -0.04 },
-    { x: 0.60, y: 0.61, z: -0.02 }, { x: 0.60, y: 0.66, z: -0.03 }, { x: 0.59, y: 0.70, z: -0.04 }, { x: 0.58, y: 0.73, z: -0.04 }
-  ],
-  // Peace / V (Index & Middle extended, others folded)
-  peace: [
-    { x: 0.5, y: 0.85, z: 0 },
-    { x: 0.43, y: 0.75, z: -0.02 }, { x: 0.39, y: 0.68, z: -0.03 }, { x: 0.41, y: 0.62, z: -0.04 }, { x: 0.46, y: 0.60, z: -0.04 },
-    { x: 0.44, y: 0.58, z: -0.01 }, { x: 0.41, y: 0.46, z: -0.03 }, { x: 0.39, y: 0.36, z: -0.05 }, { x: 0.37, y: 0.27, z: -0.06 },
-    { x: 0.50, y: 0.56, z: -0.01 }, { x: 0.51, y: 0.44, z: -0.03 }, { x: 0.53, y: 0.35, z: -0.05 }, { x: 0.55, y: 0.26, z: -0.06 },
-    { x: 0.56, y: 0.59, z: -0.01 }, { x: 0.55, y: 0.65, z: -0.03 }, { x: 0.54, y: 0.70, z: -0.04 }, { x: 0.53, y: 0.73, z: -0.04 },
-    { x: 0.61, y: 0.62, z: -0.02 }, { x: 0.60, y: 0.67, z: -0.03 }, { x: 0.58, y: 0.71, z: -0.04 }, { x: 0.57, y: 0.74, z: -0.04 }
-  ],
-  // I Love You (Thumb, Index, Pinky extended, Middle and Ring folded)
-  love: [
-    { x: 0.5, y: 0.85, z: 0 },
-    { x: 0.40, y: 0.76, z: -0.02 }, { x: 0.33, y: 0.68, z: -0.03 }, { x: 0.27, y: 0.62, z: -0.04 }, { x: 0.22, y: 0.56, z: -0.05 },
-    { x: 0.44, y: 0.58, z: -0.01 }, { x: 0.42, y: 0.46, z: -0.03 }, { x: 0.41, y: 0.36, z: -0.05 }, { x: 0.40, y: 0.27, z: -0.06 },
-    { x: 0.50, y: 0.57, z: -0.01 }, { x: 0.50, y: 0.64, z: -0.03 }, { x: 0.50, y: 0.70, z: -0.04 }, { x: 0.49, y: 0.73, z: -0.04 },
-    { x: 0.56, y: 0.59, z: -0.01 }, { x: 0.55, y: 0.65, z: -0.03 }, { x: 0.54, y: 0.70, z: -0.04 }, { x: 0.53, y: 0.73, z: -0.04 },
-    { x: 0.62, y: 0.62, z: -0.02 }, { x: 0.67, y: 0.53, z: -0.04 }, { x: 0.70, y: 0.45, z: -0.05 }, { x: 0.73, y: 0.37, z: -0.06 }
-  ]
-};
-
 /**
- * Gets effective template landmarks for a sign, checking:
- * 1. Takes-derived template
- * 2. Pre-computed templateLandmarks
- * 3. Baseline template matching label name
+ * Gets effective template landmarks for an enrolled sign strictly from its recorded takes.
+ * Does NOT use any unrecorded or hardcoded baseline gestures.
  */
 export const getEffectiveTemplate = (sign: Sign): Landmark[] | undefined => {
   if (sign.templateLandmarks && sign.templateLandmarks.length >= 21) {
     return sign.templateLandmarks;
   }
-  const fromTakes = aggregateTakesToTemplate(sign.takes);
-  if (fromTakes) return fromTakes;
-
-  // Check baseline presets by normalized label
-  const cleanLabel = sign.label.toLowerCase().trim();
-  for (const [key, tpl] of Object.entries(BASELINE_TEMPLATES)) {
-    if (cleanLabel.includes(key)) {
-      return tpl;
-    }
-  }
-
-  return undefined;
+  return aggregateTakesToTemplate(sign.takes);
 };
 
 /**
- * Predicts the matching sign from live 21 landmarks against all enrolled signs
+ * Predicts the matching sign from live 21 landmarks against ONLY the signs enrolled in the library.
+ * No hardcoded/unrecorded words will ever be predicted.
  */
 export const predictGesture = (
   liveLandmarks: Landmark[],
   signs: Sign[],
   confidenceThreshold: number = 0.75
 ): MatchResult => {
-  if (!liveLandmarks || liveLandmarks.length < 21) {
+  if (!liveLandmarks || liveLandmarks.length < 21 || !signs || signs.length === 0) {
     return { label: null, confidence: 0, similarities: [] };
   }
 
   const scores: { label: string; confidence: number }[] = [];
 
+  // ONLY match against signs in the user's library that have recorded takes/landmarks
   for (const sign of signs) {
+    // Only consider signs with at least one take recorded
+    if (!sign.takes || sign.takes.length === 0) continue;
+
     const template = getEffectiveTemplate(sign);
     if (!template) continue;
 
@@ -247,14 +196,8 @@ export const predictGesture = (
     scores.push({ label: sign.label, confidence: sim });
   }
 
-  // Also check baseline reference gestures if library is empty or for extra vocabulary
-  for (const [presetKey, presetTemplate] of Object.entries(BASELINE_TEMPLATES)) {
-    // If sign already exists for this preset, skip duplicate
-    if (!scores.some((s) => s.label.toLowerCase().includes(presetKey))) {
-      const sim = calculateHandSimilarity(liveLandmarks, presetTemplate);
-      const displayLabel = presetKey.charAt(0).toUpperCase() + presetKey.slice(1);
-      scores.push({ label: displayLabel, confidence: sim });
-    }
+  if (scores.length === 0) {
+    return { label: null, confidence: 0, similarities: [] };
   }
 
   // Sort descending by similarity

@@ -309,12 +309,37 @@ const TranslatePage: React.FC = () => {
   return (
     <div className="container mx-auto">
       {/* Page title */}
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-white">Live Translation</h2>
-        <p className="text-sm text-gray-400 mt-1">
-          Tracking all 21 hand joints in real time with mathematical gesture similarity matching.
-        </p>
+      <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-white">Live Translation</h2>
+          <p className="text-sm text-gray-400 mt-1">
+            Tracking all 21 hand joints in real time. Translating strictly from your enrolled library signs.
+          </p>
+        </div>
+        <div className="glass px-3.5 py-1.5 rounded-xl text-xs flex items-center gap-2 border border-white/10">
+          <span className="text-gray-400">Enrolled library signs:</span>
+          <span className="font-bold text-sky-400">
+            {getSigns().filter((s) => s.takes.length > 0).length} active
+          </span>
+        </div>
       </div>
+
+      {getSigns().filter((s) => s.takes.length > 0).length === 0 && (
+        <div className="mb-6 p-4 glass rounded-2xl border border-amber-500/30 bg-amber-500/5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl">💡</span>
+            <div>
+              <p className="text-sm font-semibold text-amber-300">Your library has no recorded signs yet</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Translation only recognizes signs you record in your library. Add a sign in the Library to start!
+              </p>
+            </div>
+          </div>
+          <Link to="/library" className="px-3.5 py-1.5 rounded-xl text-xs font-semibold bg-sky-500 hover:bg-sky-400 text-white transition-all">
+            Go to Library →
+          </Link>
+        </div>
+      )}
 
       <div className="flex flex-col lg:flex-row gap-6">
         {/* ── Camera Panel ── */}

@@ -95,21 +95,69 @@ const idbSet = async <T>(key: string, value: T): Promise<void> => {
   }
 };
 
-// Sync from IndexedDB into memory on startup
+// ── Disk Persistence API via Local Vite Server ────────────────────────────
+const fetchFromDisk = async (): Promise<AppData | null> => {
+  try {
+    const res = await fetch('/api/data');
+    if (res.ok) {
+      const data = await res.json();
+      if (data && Array.isArray(data.signs)) {
+        return {
+          signs: data.signs,
+          settings: normalizeSettings(data.settings),
+        };
+      }
+    }
+  } catch (_) {
+    // If running in production preview or offline, falls back to IndexedDB
+  }
+  return null;
+};
+
+const saveToDisk = async (data: AppData): Promise<void> => {
+  try {
+    await fetch('/api/data', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+  } catch (err) {
+    console.warn('Disk save warning:', err);
+  }
+};
+
+// Asynchronously sync data from Disk > IndexedDB > LocalStorage on startup
 (async () => {
   try {
+    // 1. Try loading from persistent disk file first
+    const diskData = await fetchFromDisk();
+    if (diskData && diskData.signs.length > 0) {
+      cachedData = diskData;
+      window.dispatchEvent(new Event('storage'));
+      await idbSet(DATA_RECORD_KEY, diskData);
+      return;
+    }
+
+    // 2. Try loading from IndexedDB
     const idbData = await idbGet<AppData>(DATA_RECORD_KEY);
-    if (idbData && Array.isArray(idbData.signs)) {
+    if (idbData && Array.isArray(idbData.signs) && idbData.signs.length > 0) {
       cachedData = {
         signs: idbData.signs,
         settings: normalizeSettings(idbData.settings),
       };
       window.dispatchEvent(new Event('storage'));
-    } else if (cachedData.signs.length > 0) {
+      // Sync to disk
+      await saveToDisk(cachedData);
+      return;
+    }
+
+    // 3. If cachedData has items from localStorage, persist to disk and IndexedDB
+    if (cachedData.signs.length > 0) {
       await idbSet(DATA_RECORD_KEY, cachedData);
+      await saveToDisk(cachedData);
     }
   } catch (err) {
-    console.warn('IndexedDB sync error:', err);
+    console.warn('Storage sync error:', err);
   }
 })();
 
@@ -124,14 +172,20 @@ export const saveData = async (data: AppData): Promise<void> => {
   data.settings = normalizeSettings(data.settings);
   cachedData = data;
 
+  // Immediately notify all active UI components
   window.dispatchEvent(new Event('storage'));
 
+  // 1. Save directly to local hard drive (library-data.json)
+  await saveToDisk(data);
+
+  // 2. Persist in IndexedDB (gigabytes quota, persists across tab close)
   try {
     await idbSet(DATA_RECORD_KEY, data);
   } catch (e) {
     console.error('Failed to save to IndexedDB:', e);
   }
 
+  // 3. Fallback cache in localStorage
   try {
     const lightweightData: AppData = {
       settings: data.settings,
